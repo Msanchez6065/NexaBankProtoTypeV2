@@ -1,27 +1,23 @@
-// ===========================
+﻿// ===========================
 //   INIT
 // ===========================
 function initApp() {
-  // Update sidebar / header identity
   document.getElementById('sidebarAvatar').textContent = STATE.user.initials;
-  document.getElementById('sidebarName').textContent   = STATE.user.name;
-  document.getElementById('headerName').textContent    = STATE.user.name.split(' ')[0];
-  // Show/hide savings account card
-  const savCard = document.getElementById('savingsCard');
-  if (savCard) savCard.style.display = STATE.user.hasSavings ? '' : 'none';
-  // Reset to dashboard tab
-  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  document.getElementById('page-dashboard').classList.add('active');
-  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-  document.querySelector('.nav-item[data-page="dashboard"]').classList.add('active');
+  document.getElementById('sidebarName').textContent = STATE.user.name;
+  document.getElementById('headerName').textContent = STATE.user.name.split(' ')[0];
+
+  const savingsCard = document.getElementById('savingsCard');
+  savingsCard.style.display = STATE.user.hasSavings ? '' : 'none';
+
+  showPage('dashboard', document.querySelector('.nav-item[data-page="dashboard"]'));
   renderDashboard();
   renderBillsGrid();
   renderCardsPage();
   renderLoansPage();
   refreshAllTxns();
-  initChat();
   updateBalanceSelects();
   updateWDDropdowns();
+  initChat();
   startSessionTimer();
 }
 
@@ -29,166 +25,208 @@ function initApp() {
 //   PAGES
 // ===========================
 function showPage(id, el) {
-  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  document.getElementById('page-' + id).classList.add('active');
-  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.querySelectorAll('.page').forEach(page => page.classList.remove('active'));
+  document.getElementById(`page-${id}`).classList.add('active');
+  document.querySelectorAll('.nav-item').forEach(item => item.classList.remove('active'));
   if (el) el.classList.add('active');
+
   if (id === 'history') refreshAllTxns();
+  if (id === 'cards') renderCardsPage();
   if (id === 'loans') renderLoansPage();
 }
 
 // ===========================
 //   RENDER HELPERS
 // ===========================
-function fmt(n) { return '$' + n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
-function timeStr() {
-  const d = new Date();
-  return d.toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit' });
-}
-function today() {
-  return new Date().toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
-}
-
 function renderDashboard() {
-  document.getElementById('balChecking').textContent = fmt(STATE.balances.checking);
-  if (STATE.user.hasSavings && STATE.balances.savings !== undefined) {
-    document.getElementById('balSavings').textContent = fmt(STATE.balances.savings);
+  document.getElementById('balChecking').textContent = fmt(STATE.balances.checking || 0);
+
+  if (STATE.user.hasSavings) {
+    document.getElementById('balSavings').textContent = fmt(STATE.balances.savings || 0);
   }
+
   const total = (STATE.balances.checking || 0) + (STATE.balances.savings || 0);
   document.getElementById('statTotal').textContent = fmt(total);
-  document.getElementById('statSpent').textContent = fmt(STATE.monthSpent);
+  document.getElementById('statSpent').textContent = fmt(STATE.monthSpent || 0);
+  document.getElementById('statBills').textContent = String(STATE.bills.length);
   renderTxnList('recentTxns', STATE.transactions.slice(0, 5));
 }
 
 function renderTxnList(elId, list) {
-  const el = document.getElementById(elId);
-  if (!list.length) { el.innerHTML = '<div class="muted small" style="padding:16px">No transactions yet.</div>'; return; }
-  el.innerHTML = list.map(t => 
-    <div class="txn-item">
-      <div class="txn-icon "></div>
-      <div class="txn-desc">
-        <div class="txn-name"></div>
-        <div class="txn-date"></div>
+  const container = document.getElementById(elId);
+  if (!container) return;
+
+  if (!list.length) {
+    container.innerHTML = '<div class="txn-item"><div class="txn-desc"><div class="txn-name">No transactions yet.</div></div></div>';
+    return;
+  }
+
+  container.innerHTML = list.map(txn => {
+    const amountClass = txn.type === 'in' ? 'in' : 'out';
+    const icon = txn.icon || (txn.type === 'in' ? '↓' : txn.type === 'bill' ? '◦' : '↑');
+    const signedAmount = txn.type === 'in' ? `+${fmt(txn.amount)}` : `-${fmt(txn.amount)}`;
+
+    return `
+      <div class="txn-item">
+        <div class="txn-icon ${txn.type}">${icon}</div>
+        <div class="txn-desc">
+          <div class="txn-name">${txn.desc}</div>
+          <div class="txn-date">${txn.date}</div>
+        </div>
+        <div class="txn-amount ${amountClass}">${signedAmount}</div>
       </div>
-      <div class="txn-amount "></div>
-    </div>).join('');
+    `;
+  }).join('');
 }
 
-function refreshAllTxns() { renderTxnList('allTxns', STATE.transactions); }
+function refreshAllTxns() {
+  renderTxnList('allTxns', STATE.transactions);
+}
 
 function renderBillsGrid() {
-  document.getElementById('billsGrid').innerHTML = STATE.bills.map(b => 
-    <div class="bill-card" id="bill-" onclick="selectBill('')">
-      <div class="bill-icon"></div>
-      <div class="bill-name"></div>
-      <div class="bill-due">Due </div>
-      <div class="bill-amount"></div>
-    </div>).join('');
+  const grid = document.getElementById('billsGrid');
+  if (!grid) return;
+
+  if (!STATE.bills.length) {
+    grid.innerHTML = '<div class="bill-card"><div class="bill-name">No pending bills</div><div class="bill-due">You are all caught up.</div></div>';
+    return;
+  }
+
+  grid.innerHTML = STATE.bills.map(bill => `
+    <div class="bill-card" id="bill-${bill.id}" onclick="selectBill('${bill.id}')">
+      <div class="bill-icon">${bill.icon || '◦'}</div>
+      <div class="bill-name">${bill.name}</div>
+      <div class="bill-due">Due ${bill.due}</div>
+      <div class="bill-amount">${fmt(bill.amount)}</div>
+    </div>
+  `).join('');
 }
 
 function selectBill(id) {
-  document.querySelectorAll('.bill-card').forEach(c => c.classList.remove('selected'));
-  document.getElementById('bill-' + id).classList.add('selected');
-  const b = STATE.bills.find(x => x.id === id);
-  document.getElementById('billName').value = b.name;
-  document.getElementById('billAmount').value = b.amount;
+  document.querySelectorAll('.bill-card').forEach(card => card.classList.remove('selected'));
+  const selected = document.getElementById(`bill-${id}`);
+  if (selected) selected.classList.add('selected');
+
+  const bill = STATE.bills.find(item => item.id === id);
+  if (!bill) return;
+
+  document.getElementById('billName').value = bill.name;
+  document.getElementById('billAmount').value = bill.amount;
 }
 
 function renderCardsPage() {
-  document.getElementById('cardsGrid').innerHTML = STATE.cards.map(c => 
+  const grid = document.getElementById('cardsGrid');
+  if (!grid) return;
+
+  grid.innerHTML = STATE.cards.map(card => `
     <div>
-      <div class="bank-card  ">
+      <div class="bank-card ${card.brand.toLowerCase().includes('master') ? 'mc' : 'visa'} ${card.frozen ? 'frozen' : ''}">
         <div>
-          <div class="bank-card-chip">??</div>
-          <div class="bank-card-num"></div>
+          <div class="bank-card-chip">◼</div>
+          <div class="bank-card-num">${card.num}</div>
         </div>
         <div class="bank-card-footer">
           <div>
-            <div class="bank-card-holder"></div>
-            <div class="small muted">Exp </div>
+            <div class="bank-card-holder">${card.holder}</div>
+            <div class="small muted">Exp ${card.exp}</div>
           </div>
-          <div class="bank-card-brand"></div>
+          <div class="bank-card-brand">${card.brand}</div>
         </div>
       </div>
-      <div class="card-status-badge ">
-        
-      </div><br>
-      <button class="btn-freeze "
-        onclick="toggleCard('')">
-        
+      <div class="card-status-badge ${card.frozen ? 'frozen' : 'active'}">
+        ${card.frozen ? 'Frozen' : 'Active'}
+      </div>
+      <br>
+      <button
+        class="btn-freeze ${card.frozen ? 'do-unfreeze' : 'do-freeze'}"
+        onclick="toggleCard('${card.id}')">
+        ${card.frozen ? 'Unfreeze Card' : 'Freeze Card'}
       </button>
-    </div>).join('');
+    </div>
+  `).join('');
 }
 
 function toggleCard(id) {
-  const c = STATE.cards.find(x => x.id === id);
-  c.frozen = !c.frozen;
+  const card = STATE.cards.find(item => item.id === id);
+  if (!card) return;
+
+  card.frozen = !card.frozen;
   renderCardsPage();
-  showToast(c.frozen ? ??  card frozen : ??  card unfrozen, c.frozen ? 'error' : 'success');
+  showToast(`${card.brand} card ${card.frozen ? 'frozen' : 'unfrozen'}.`, card.frozen ? 'error' : 'success');
 }
 
 function renderLoansPage() {
   const grid = document.getElementById('loansGrid');
-  if (!grid) return;
-  grid.innerHTML = STATE.loans.map(l => {
-    let pct, pctLabel, fillClass;
-    if (l.type === 'credit') {
-      pct = ((l.balance / l.limit) * 100).toFixed(0);
-      pctLabel = ${pct}% utilization ( of );
-      fillClass = 'credit';
-    } else {
-      const paid = l.original - l.balance;
-      pct = ((paid / l.original) * 100).toFixed(0);
-      pctLabel = ${pct}% paid off ( of );
-      fillClass = 'installment';
-    }
-    return 
-    <div class="loan-card">
-      <div class="loan-header">
-        <div class="loan-icon-wrap "></div>
-        <div class="loan-meta">
-          <div class="loan-name"></div>
-          <div class="loan-apr">% APR � </div>
+  const select = document.getElementById('loanSelect');
+  if (!grid || !select) return;
+
+  if (!STATE.loans.length) {
+    grid.innerHTML = '<div class="loan-card"><div class="loan-name">No active loans</div><div class="loan-apr">This account has no open credit balances.</div></div>';
+    select.innerHTML = '';
+    return;
+  }
+
+  grid.innerHTML = STATE.loans.map(loan => {
+    const isCredit = loan.type === 'credit';
+    const progressPct = isCredit
+      ? Math.min(100, (loan.balance / loan.limit) * 100)
+      : Math.min(100, ((loan.original - loan.balance) / loan.original) * 100);
+    const progressLabel = isCredit
+      ? `${Math.round(progressPct)}% utilization`
+      : `${Math.round(progressPct)}% paid off`;
+    const thirdLabel = isCredit ? 'Credit Limit' : 'Original Balance';
+    const thirdValue = isCredit ? fmt(loan.limit) : fmt(loan.original);
+
+    return `
+      <div class="loan-card">
+        <div class="loan-header">
+          <div class="loan-icon-wrap ${loan.colorClass || loan.type}">${loan.icon || '$'}</div>
+          <div class="loan-meta">
+            <div class="loan-name">${loan.name}</div>
+            <div class="loan-apr">${loan.apr.toFixed(2)}% APR</div>
+          </div>
+          <div class="due-badge">Due ${loan.dueDate}</div>
         </div>
-        <div class="due-badge">?? Due </div>
+        <div class="loan-balance-row">
+          <div>
+            <div class="loan-bal-label">Current Balance</div>
+            <div class="loan-bal-value">${fmt(loan.balance)}</div>
+          </div>
+        </div>
+        <div class="loan-detail-row">
+          <div class="loan-detail">
+            <div class="loan-detail-label">Min. Payment</div>
+            <div class="loan-detail-val">${fmt(loan.minPayment)}</div>
+          </div>
+          <div class="loan-detail">
+            <div class="loan-detail-label">APR</div>
+            <div class="loan-detail-val">${loan.apr.toFixed(2)}%</div>
+          </div>
+          <div class="loan-detail">
+            <div class="loan-detail-label">${thirdLabel}</div>
+            <div class="loan-detail-val">${thirdValue}</div>
+          </div>
+        </div>
+        <div class="loan-progress-wrap">
+          <div class="loan-progress-label">
+            <span>${progressLabel}</span>
+            <span>${fmt(loan.balance)}</span>
+          </div>
+          <div class="loan-progress-bar">
+            <div class="loan-progress-fill ${loan.type}" style="width:${progressPct}%"></div>
+          </div>
+        </div>
       </div>
-      <div class="loan-balance-row">
-        <div>
-          <div class="loan-bal-label"></div>
-          <div class="loan-bal-value"></div>
-        </div>
-      </div>
-      <div class="loan-detail-row">
-        <div class="loan-detail">
-          <div class="loan-detail-label">Min. Payment</div>
-          <div class="loan-detail-val"></div>
-        </div>
-        <div class="loan-detail">
-          <div class="loan-detail-label">APR</div>
-          <div class="loan-detail-val">%</div>
-        </div>
-        <div class="loan-detail">
-          <div class="loan-detail-label"></div>
-          <div class="loan-detail-val"></div>
-        </div>
-      </div>
-      <div class="loan-progress-wrap">
-        <div class="loan-progress-label">
-          <span></span>
-        </div>
-        <div class="loan-progress-bar">
-          <div class="loan-progress-fill " style="width:%"></div>
-        </div>
-      </div>
-    </div>;
+    `;
   }).join('');
 
-  // sync loan select dropdown
-  const sel = document.getElementById('loanSelect');
-  if (sel) {
-    const cur = sel.value;
-    sel.innerHTML = STATE.loans.map(l => <option value=""> � </option>).join('');
-    if (STATE.loans.find(l => l.id === cur)) sel.value = cur;
+  const current = select.value;
+  select.innerHTML = STATE.loans.map(loan => `
+    <option value="${loan.id}">${loan.name} - ${fmt(loan.balance)}</option>
+  `).join('');
+
+  if (STATE.loans.some(loan => loan.id === current)) {
+    select.value = current;
   }
 }
 
@@ -196,8 +234,9 @@ function renderLoansPage() {
 //   TOAST
 // ===========================
 function showToast(msg, type = 'success') {
-  const t = document.getElementById('toast');
-  t.textContent = msg;
-  t.className = show ;
-  setTimeout(() => t.classList.remove('show'), 3000);
+  const toast = document.getElementById('toast');
+  toast.textContent = msg;
+  toast.className = type;
+  toast.classList.add('show');
+  setTimeout(() => toast.classList.remove('show'), 3000);
 }

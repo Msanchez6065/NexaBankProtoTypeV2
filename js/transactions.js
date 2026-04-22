@@ -1,126 +1,239 @@
-// ===========================
+﻿// ===========================
 //   TRANSFERS
 // ===========================
+function toggleTfType() {
+  const type = document.getElementById('tfType').value;
+  document.getElementById('tfToOwnWrap').classList.toggle('hidden', type !== 'own');
+  document.getElementById('tfToUserWrap').classList.toggle('hidden', type !== 'user');
+}
+
 function doTransfer() {
-  const from = document.getElementById("transferFrom").value;
-  const to   = document.getElementById("transferTo").value;
-  const amt  = parseFloat(document.getElementById("transferAmount").value);
-  const note = document.getElementById("transferNote").value.trim();
+  const type = document.getElementById('tfType').value;
+  const from = document.getElementById('tfFrom').value;
+  const amount = parseFloat(document.getElementById('tfAmount').value);
+  const note = document.getElementById('tfNote').value.trim();
 
-  if (!amt || amt <= 0) { showToast("? Please enter a valid amount.", "error"); return; }
-  if (from === to) { showToast("? Cannot transfer to the same account.", "error"); return; }
-
-  const fromBal = STATE.balances[from];
-  if (amt > fromBal) { showToast("? Insufficient funds.", "error"); return; }
-
-  // Update balances
-  STATE.balances[from] -= amt;
-  STATE.balances[to]   += amt;
-
-  // Add transactions
-  const desc = note || `Transfer from ${from} to ${to}`;
-  const txn = { id: Date.now(), date: today(), desc, amount: amt, type: "out", icon: "??" };
-  STATE.transactions.unshift(txn);
-  if (from === "checking") {
-    STATE.transactions.unshift({ ...txn, desc: `Transfer to ${to}`, type: "out" });
-  }
-  if (to === "checking") {
-    STATE.transactions.unshift({ ...txn, desc: `Transfer from ${from}`, type: "in" });
+  if (!amount || amount <= 0) {
+    showToast('Please enter a valid amount.', 'error');
+    return;
   }
 
-  // Update UI
+  if (amount > (STATE.balances[from] || 0)) {
+    showToast('Insufficient funds.', 'error');
+    return;
+  }
+
+  if (type === 'own') {
+    const to = document.getElementById('tfTo').value;
+    if (to === from) {
+      showToast('Choose a different destination account.', 'error');
+      return;
+    }
+
+    STATE.balances[from] = roundTo(STATE.balances[from] - amount);
+    STATE.balances[to] = roundTo((STATE.balances[to] || 0) + amount);
+    STATE.transactions.unshift({
+      id: Date.now(),
+      desc: note || `Transfer to ${capitalize(to)}`,
+      type: 'out',
+      amount,
+      date: today(),
+      icon: '⇄',
+      acct: from,
+    });
+    STATE.transactions.unshift({
+      id: Date.now() + 1,
+      desc: note || `Transfer from ${capitalize(from)}`,
+      type: 'in',
+      amount,
+      date: today(),
+      icon: '⇄',
+      acct: to,
+    });
+    showToast(`Transferred ${fmt(amount)} to ${to}.`);
+  } else {
+    const recipientKey = document.getElementById('tfToUser').value;
+    const recipient = STATE.nexaUsers[recipientKey];
+
+    STATE.balances[from] = roundTo(STATE.balances[from] - amount);
+    STATE.transactions.unshift({
+      id: Date.now(),
+      desc: note || `Transfer to ${recipient.name}`,
+      type: 'out',
+      amount,
+      date: today(),
+      icon: '→',
+      acct: from,
+    });
+    showToast(`Sent ${fmt(amount)} to ${recipient.name}.`);
+  }
+
+  document.getElementById('tfAmount').value = '';
+  document.getElementById('tfNote').value = '';
   renderDashboard();
   refreshAllTxns();
-  document.getElementById("transferAmount").value = "";
-  document.getElementById("transferNote").value = "";
-  showToast(`? Transferred ${fmt(amt)} from ${from} to ${to}`);
+  updateBalanceSelects();
+  updateWDDropdowns();
 }
 
 // ===========================
 //   BILL PAYMENTS
 // ===========================
-function payBill() {
-  const id = document.querySelector(".bill-card.selected");
-  if (!id) { showToast("? Please select a bill to pay.", "error"); return; }
-  const billId = id.id.replace("bill-", "");
-  const b = STATE.bills.find(x => x.id === billId);
-  if (!b) return;
+function doPayBill() {
+  const name = document.getElementById('billName').value.trim();
+  const amount = parseFloat(document.getElementById('billAmount').value);
+  const from = document.getElementById('billFrom').value;
 
-  const amt = parseFloat(document.getElementById("billAmount").value);
-  if (!amt || amt <= 0) { showToast("? Please enter a valid amount.", "error"); return; }
-  if (amt > STATE.balances.checking) { showToast("? Insufficient funds.", "error"); return; }
-
-  // Update balance
-  STATE.balances.checking -= amt;
-
-  // Add transaction
-  STATE.transactions.unshift({
-    id: Date.now(), date: today(), desc: `Paid ${b.name}`, amount: amt, type: "out", icon: "??"
-  });
-
-  // Update bill (simulate payment)
-  b.amount -= amt;
-  if (b.amount <= 0) {
-    STATE.bills = STATE.bills.filter(x => x.id !== billId);
+  if (!name) {
+    showToast('Enter a bill or payee name.', 'error');
+    return;
   }
 
-  // Update UI
+  if (!amount || amount <= 0) {
+    showToast('Please enter a valid amount.', 'error');
+    return;
+  }
+
+  if (amount > (STATE.balances[from] || 0)) {
+    showToast('Insufficient funds.', 'error');
+    return;
+  }
+
+  STATE.balances[from] = roundTo(STATE.balances[from] - amount);
+  STATE.monthSpent = roundTo((STATE.monthSpent || 0) + amount);
+  STATE.transactions.unshift({
+    id: Date.now(),
+    desc: `Bill payment - ${name}`,
+    type: 'bill',
+    amount,
+    date: today(),
+    icon: '◦',
+    acct: from,
+  });
+
+  const existingBill = STATE.bills.find(bill => bill.name.toLowerCase() === name.toLowerCase());
+  if (existingBill) {
+    STATE.bills = STATE.bills.filter(bill => bill.id !== existingBill.id);
+  }
+
+  document.getElementById('billName').value = '';
+  document.getElementById('billAmount').value = '';
   renderDashboard();
   renderBillsGrid();
   refreshAllTxns();
-  document.getElementById("billAmount").value = "";
-  document.querySelectorAll(".bill-card").forEach(c => c.classList.remove("selected"));
-  showToast(`? Paid ${fmt(amt)} to ${b.name}`);
+  updateBalanceSelects();
+  updateWDDropdowns();
+  showToast(`Paid ${fmt(amount)} to ${name}.`);
 }
 
 // ===========================
 //   LOAN PAYMENTS
 // ===========================
-function payLoan() {
-  const loanId = document.getElementById("loanSelect").value;
-  if (!loanId) { showToast("? Please select a loan to pay.", "error"); return; }
-  const l = STATE.loans.find(x => x.id === loanId);
-  if (!l) return;
+function getSelectedLoan() {
+  const loanId = document.getElementById('loanSelect').value;
+  return STATE.loans.find(loan => loan.id === loanId);
+}
 
-  const amt = parseFloat(document.getElementById("loanAmount").value);
-  if (!amt || amt <= 0) { showToast("? Please enter a valid amount.", "error"); return; }
-  if (amt > STATE.balances.checking) { showToast("? Insufficient funds.", "error"); return; }
+function payLoanAmount(amount) {
+  const loan = getSelectedLoan();
+  const from = document.getElementById('loanPayFrom').value;
 
-  // Update balance
-  STATE.balances.checking -= amt;
-
-  // Update loan balance
-  l.balance -= amt;
-  if (l.balance <= 0) {
-    STATE.loans = STATE.loans.filter(x => x.id !== loanId);
+  if (!loan) {
+    showToast('Select a loan first.', 'error');
+    return;
   }
 
-  // Add transaction
+  if (!amount || amount <= 0) {
+    showToast('Please enter a valid amount.', 'error');
+    return;
+  }
+
+  if (amount > (STATE.balances[from] || 0)) {
+    showToast('Insufficient funds.', 'error');
+    return;
+  }
+
+  const payment = Math.min(amount, loan.balance);
+  STATE.balances[from] = roundTo(STATE.balances[from] - payment);
+  loan.balance = roundTo(Math.max(0, loan.balance - payment));
   STATE.transactions.unshift({
-    id: Date.now(), date: today(), desc: `Loan payment - ${l.name}`, amount: amt, type: "out", icon: "??"
+    id: Date.now(),
+    desc: `Loan payment - ${loan.name}`,
+    type: 'out',
+    amount: payment,
+    date: today(),
+    icon: '◧',
+    acct: from,
   });
 
-  // Update UI
+  if (loan.balance === 0) {
+    STATE.loans = STATE.loans.filter(item => item.id !== loan.id);
+  }
+
+  document.getElementById('loanPayAmt').value = '';
   renderDashboard();
   renderLoansPage();
   refreshAllTxns();
-  document.getElementById("loanAmount").value = "";
-  showToast(`? Paid ${fmt(amt)} towards ${l.name}`);
+  updateBalanceSelects();
+  updateWDDropdowns();
+  showToast(`Paid ${fmt(payment)} toward ${loan.name}.`);
+}
+
+function doPayLoan() {
+  payLoanAmount(parseFloat(document.getElementById('loanPayAmt').value));
+}
+
+function doPayLoanMin() {
+  const loan = getSelectedLoan();
+  if (!loan) {
+    showToast('Select a loan first.', 'error');
+    return;
+  }
+  payLoanAmount(loan.minPayment);
+}
+
+function doPayLoanFull() {
+  const loan = getSelectedLoan();
+  if (!loan) {
+    showToast('Select a loan first.', 'error');
+    return;
+  }
+  payLoanAmount(loan.balance);
 }
 
 // ===========================
 //   BALANCE SELECTS
 // ===========================
 function updateBalanceSelects() {
-  const sels = ["transferFrom", "transferTo"];
-  sels.forEach(id => {
-    const sel = document.getElementById(id);
-    if (!sel) return;
-    const cur = sel.value;
-    sel.innerHTML = `
-      <option value="checking">Checking � ${fmt(STATE.balances.checking)}</option>
-      ${STATE.user.hasSavings ? `<option value="savings">Savings � ${fmt(STATE.balances.savings)}</option>` : ""}
-    `;
-    if (cur && sel.querySelector(`option[value="${cur}"]`)) sel.value = cur;
-  });
+  const tfFrom = document.getElementById('tfFrom');
+  const tfTo = document.getElementById('tfTo');
+  const billFrom = document.getElementById('billFrom');
+  const loanPayFrom = document.getElementById('loanPayFrom');
+
+  const options = [
+    { value: 'checking', label: `Checking - ${fmt(STATE.balances.checking || 0)}` },
+  ];
+
+  if (STATE.user.hasSavings && STATE.balances.savings !== undefined) {
+    options.push({ value: 'savings', label: `Savings - ${fmt(STATE.balances.savings)}` });
+  }
+
+  fillSelect(tfFrom, options);
+  fillSelect(billFrom, options);
+  fillSelect(loanPayFrom, options);
+
+  if (tfTo) {
+    const current = tfTo.value;
+    tfTo.innerHTML = options.map(option => `<option value="${option.value}">${option.label}</option>`).join('');
+    if (options.some(option => option.value === current)) tfTo.value = current;
+  }
+}
+
+function fillSelect(select, options) {
+  if (!select) return;
+  const current = select.value;
+  select.innerHTML = options.map(option => `<option value="${option.value}">${option.label}</option>`).join('');
+  if (options.some(option => option.value === current)) {
+    select.value = current;
+  }
 }

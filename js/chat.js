@@ -1,123 +1,144 @@
-// ===========================
+﻿// ===========================
 //   CHAT ASSISTANT
 // ===========================
 function initChat() {
-  chatCtx = { step: "idle", data: {} };
-  document.getElementById("chatInput").addEventListener("keydown", e => {
-    if (e.key === "Enter") sendChat();
-  });
+  const chatMessages = document.getElementById('chatMessages');
+  chatMessages.innerHTML = '';
+  chatCtx = { step: 'idle', data: {} };
+  addChatMsg('bot', `Hi ${STATE.user.name.split(' ')[0]}, I'm Nexi. Ask about balances, transfers, bills, loans, or cards.`);
 }
 
 function sendChat() {
-  const input = document.getElementById("chatInput").value.trim();
-  if (!input) return;
-  addChatMsg("user", input);
-  document.getElementById("chatInput").value = "";
-  processChat(input.toLowerCase());
+  const input = document.getElementById('chatInput');
+  const message = input.value.trim();
+  if (!message) return;
+
+  addChatMsg('user', message);
+  input.value = '';
+  processChat(message);
 }
 
-function addChatMsg(type, text, isHtml = false) {
-  const chat = document.getElementById("chatMsgs");
-  const msg = document.createElement("div");
-  msg.className = `chat-msg ${type}`;
-  if (isHtml) msg.innerHTML = text; else msg.textContent = text;
+function addChatMsg(type, text) {
+  const chat = document.getElementById('chatMessages');
+  const msg = document.createElement('div');
+  msg.className = `msg ${type}`;
+
+  const avatar = document.createElement('div');
+  avatar.className = 'msg-mini-avatar';
+  avatar.textContent = type === 'bot' ? 'N' : STATE.user.initials.slice(0, 1);
+
+  const bubbleWrap = document.createElement('div');
+  const bubble = document.createElement('div');
+  bubble.className = 'msg-bubble';
+  bubble.textContent = text;
+  const time = document.createElement('div');
+  time.className = 'msg-time';
+  time.textContent = timeStr();
+
+  bubbleWrap.appendChild(bubble);
+  bubbleWrap.appendChild(time);
+  msg.appendChild(avatar);
+  msg.appendChild(bubbleWrap);
   chat.appendChild(msg);
   chat.scrollTop = chat.scrollHeight;
 }
 
-function processChat(msg) {
-  // Simple NLP patterns
-  const patterns = {
-    balance: /\b(balance|money|funds|account)\b/i,
-    transfer: /\b(transfer|send|move|pay)\b.*\b(to|from)\b/i,
-    bill: /\b(bill|payment|pay|due)\b/i,
-    loan: /\b(loan|credit|debt|borrow)\b/i,
-    help: /\b(help|what|how|can|support)\b/i,
-    history: /\b(history|transactions|activity|recent)\b/i,
-    card: /\b(card|freeze|unfreeze|debit|credit)\b/i,
-    deposit: /\b(deposit|add|withdraw|cash)\b/i,
-    savings: /\b(savings|save|interest)\b/i,
-    chat: /\b(chat|talk|assistant|nexa)\b/i
-  };
+function processChat(rawMessage) {
+  const message = rawMessage.toLowerCase();
+  let response = 'I can help with balances, transfers, bills, loans, cards, and recent activity.';
 
-  let response = "I'm not sure I understand. Try asking about your balance, transfers, bills, loans, or cards!";
-  let action = null;
-
-  if (patterns.balance.test(msg)) {
-    response = `Your checking balance is ${fmt(STATE.balances.checking)}.${STATE.user.hasSavings ? ` Your savings balance is ${fmt(STATE.balances.savings)}.` : ""}`;
-  } else if (patterns.transfer.test(msg)) {
-    if (chatCtx.step === "idle") {
-      chatCtx.step = "transfer_amount";
-      response = "How much would you like to transfer?";
+  if (chatCtx.step === 'transfer_amount') {
+    const amount = parseFloat(message.replace(/[^0-9.]/g, ''));
+    if (!amount || amount <= 0) {
+      replyLater('Please enter a valid dollar amount.');
+      return;
     }
-  } else if (patterns.bill.test(msg)) {
-    const bills = STATE.bills.map(b => `${b.name}: ${fmt(b.amount)} due ${b.due}`).join(", ");
-    response = bills ? `Your bills: ${bills}` : "You have no outstanding bills!";
-  } else if (patterns.loan.test(msg)) {
-    const loans = STATE.loans.map(l => `${l.name}: ${fmt(l.balance)} remaining`).join(", ");
-    response = loans ? `Your loans: ${loans}` : "You have no outstanding loans!";
-  } else if (patterns.history.test(msg)) {
-    const recent = STATE.transactions.slice(0, 3).map(t => `${t.desc}: ${t.type === "in" ? "+" : "-"}${fmt(t.amount)}`).join(", ");
-    response = recent ? `Recent transactions: ${recent}` : "No recent transactions.";
-  } else if (patterns.card.test(msg)) {
-    const cards = STATE.cards.map(c => `${c.brand}: ${c.frozen ? "frozen" : "active"}`).join(", ");
-    response = `Your cards: ${cards}`;
-  } else if (patterns.deposit.test(msg) || patterns.withdraw.test(msg)) {
-    response = "For deposits and withdrawals, please use the Withdraw/Deposit section in the app.";
-  } else if (patterns.savings.test(msg)) {
-    if (STATE.user.hasSavings) {
-      response = `Your savings balance is ${fmt(STATE.balances.savings)}.`;
-    } else {
-      response = "You don't have a savings account yet.";
-    }
-  } else if (patterns.chat.test(msg) || patterns.help.test(msg)) {
-    response = "I'm Nexa, your banking assistant! I can help with balances, transfers, bills, loans, cards, and more. What would you like to know?";
+    chatCtx = { step: 'transfer_to', data: { amount } };
+    replyLater('Who would you like to transfer to? Enter a NexaBank username.');
+    return;
   }
 
-  // Handle multi-step conversations
-  if (chatCtx.step === "transfer_amount") {
-    const amt = parseFloat(msg.replace(/[^0-9.]/g, ""));
-    if (amt && amt > 0) {
-      chatCtx.data.amount = amt;
-      chatCtx.step = "transfer_to";
-      response = "Who would you like to transfer to? (Enter a NexaBank username)";
-    } else {
-      response = "Please enter a valid amount.";
+  if (chatCtx.step === 'transfer_to') {
+    const username = message.replace(/[^a-z0-9]/g, '');
+    const recipient = STATE.nexaUsers[username];
+    if (!recipient) {
+      replyLater('I do not recognize that recipient. Try one of the usernames from the transfer dropdown.');
+      return;
     }
-  } else if (chatCtx.step === "transfer_to") {
-    const user = msg.replace(/[^a-z0-9]/gi, "").toLowerCase();
-    if (STATE.nexaUsers.includes(user)) {
-      chatCtx.data.to = user;
-      chatCtx.step = "transfer_confirm";
-      response = `Transfer ${fmt(chatCtx.data.amount)} to ${user}? Reply "yes" to confirm.`;
-    } else {
-      response = "I don't recognize that username. Please check the spelling.";
-    }
-  } else if (chatCtx.step === "transfer_confirm" && msg.includes("yes")) {
-    if (chatCtx.data.amount > STATE.balances.checking) {
-      response = "Insufficient funds for this transfer.";
-    } else {
-      STATE.balances.checking -= chatCtx.data.amount;
-      STATE.transactions.unshift({
-        id: Date.now(), date: today(), desc: `Transfer to ${chatCtx.data.to}`, amount: chatCtx.data.amount, type: "out", icon: "??"
-      });
-      renderDashboard();
-      refreshAllTxns();
-      response = `? Transfer of ${fmt(chatCtx.data.amount)} to ${chatCtx.data.to} completed!`;
-    }
-    chatCtx = { step: "idle", data: {} };
-  } else if (chatCtx.step === "transfer_confirm") {
-    response = "Transfer cancelled.";
-    chatCtx = { step: "idle", data: {} };
+    chatCtx.data.to = username;
+    chatCtx.step = 'transfer_confirm';
+    replyLater(`Reply yes to send ${fmt(chatCtx.data.amount)} to ${recipient.name}.`);
+    return;
   }
 
-  setTimeout(() => addChatMsg("bot", response), 500 + Math.random() * 500);
+  if (chatCtx.step === 'transfer_confirm') {
+    if (!message.includes('yes')) {
+      chatCtx = { step: 'idle', data: {} };
+      replyLater('Transfer canceled.');
+      return;
+    }
+
+    const amount = chatCtx.data.amount;
+    const recipient = STATE.nexaUsers[chatCtx.data.to];
+    if (amount > (STATE.balances.checking || 0)) {
+      chatCtx = { step: 'idle', data: {} };
+      replyLater('Insufficient funds in checking for that transfer.');
+      return;
+    }
+
+    STATE.balances.checking = roundTo(STATE.balances.checking - amount);
+    STATE.transactions.unshift({
+      id: Date.now(),
+      desc: `Transfer to ${recipient.name}`,
+      type: 'out',
+      amount,
+      date: today(),
+      icon: '→',
+      acct: 'checking',
+    });
+    renderDashboard();
+    refreshAllTxns();
+    updateBalanceSelects();
+    updateWDDropdowns();
+    chatCtx = { step: 'idle', data: {} };
+    replyLater(`Transfer complete. ${fmt(amount)} sent to ${recipient.name}.`);
+    return;
+  }
+
+  if (/\b(balance|checking|savings|money|funds)\b/.test(message)) {
+    response = `Checking: ${fmt(STATE.balances.checking || 0)}.${STATE.user.hasSavings ? ` Savings: ${fmt(STATE.balances.savings || 0)}.` : ''}`;
+  } else if (/\b(transfer|send money|move money)\b/.test(message)) {
+    chatCtx = { step: 'transfer_amount', data: {} };
+    response = 'How much would you like to transfer?';
+  } else if (/\b(bill|bills|payment|due)\b/.test(message)) {
+    response = STATE.bills.length
+      ? `Pending bills: ${STATE.bills.map(bill => `${bill.name} ${fmt(bill.amount)} due ${bill.due}`).join(', ')}`
+      : 'You have no pending bills.';
+  } else if (/\b(loan|credit|debt)\b/.test(message)) {
+    response = STATE.loans.length
+      ? `Loans: ${STATE.loans.map(loan => `${loan.name} ${fmt(loan.balance)} remaining`).join(', ')}`
+      : 'You have no outstanding loans.';
+  } else if (/\b(card|cards|freeze)\b/.test(message)) {
+    response = `Cards: ${STATE.cards.map(card => `${card.brand} is ${card.frozen ? 'frozen' : 'active'}`).join(', ')}.`;
+  } else if (/\b(history|transactions|activity|recent)\b/.test(message)) {
+    response = STATE.transactions.length
+      ? `Recent activity: ${STATE.transactions.slice(0, 3).map(txn => `${txn.desc} ${txn.type === 'in' ? '+' : '-'}${fmt(txn.amount)}`).join(', ')}`
+      : 'No recent transactions.';
+  }
+
+  replyLater(response);
+}
+
+function replyLater(text) {
+  setTimeout(() => addChatMsg('bot', text), 350);
 }
 
 function toggleChat() {
-  const chat = document.getElementById("chatContainer");
-  chat.classList.toggle("open");
-  if (chat.classList.contains("open")) {
-    document.getElementById("chatInput").focus();
+  const panel = document.getElementById('chatPanel');
+  const overlay = document.getElementById('chatOverlay');
+  panel.classList.toggle('open');
+  overlay.classList.toggle('open');
+  if (panel.classList.contains('open')) {
+    document.getElementById('chatInput').focus();
   }
 }
